@@ -4,13 +4,6 @@ use std::io::Write;
 use thiserror::Error;
 
 type Word = [char; 5];
-type Amounts = [[u32; 5]; 26];
-
-struct Dic {
-    results: Vec<Letter>,
-    known: [bool; 5],
-    words: Vec<Word>,
-}
 
 #[derive(Error, Debug)]
 enum Error {
@@ -22,138 +15,98 @@ enum Error {
 
 #[derive(Debug)]
 enum Letter {
-    YesAt { c: char, i: usize },
-    NotAt { c: char, i: usize },
-    Not { c: char },
+    Not(char),
+    NotAt(char, usize),
+    Yes(char),
+    YesAt(char, usize),
 }
 
-impl Dic {
-    fn word_from_str(word: &str) -> Word {
-        let mut result: Word = ['\0'; 5];
+fn word_from_str(word: &str) -> Word {
+    let mut result: Word = ['\0'; 5];
 
-        for (i, c) in word.chars().take(5).enumerate() {
-            result[i] = c;
-        }
-
-        result
+    for (i, c) in word.chars().take(5).enumerate() {
+        result[i] = c;
     }
 
-    fn new(content: &str) -> Self {
-        Dic {
-            results: Vec::new(),
-            known: [false; 5],
-            words: content.lines().map(Self::word_from_str).collect(),
+    result
+}
+
+fn word_to_str(word: &Word) -> String {
+    word.map(|v| v.to_string()).join("")
+}
+
+fn get_result(guess: &Word, word: &Word) -> Vec<Letter> {
+    let mut result = Vec::with_capacity(guess.len());
+
+    for (i, g) in guess.iter().enumerate() {
+        if word.contains(g) {
+            result.push(Letter::Yes(*g));
+
+            if word[i] != *g {
+                result.push(Letter::NotAt(*g, i))
+            }
+        } else {
+            result.push(Letter::Not(*g));
         }
     }
 
-    fn word_valid(&self, word: &Word) -> bool {
-        for letter in self.results.iter() {
-            match letter {
-                Letter::YesAt { c, i } => {
-                    if word[*i] != *c {
-                        return false;
-                    }
+    return result;
+}
+
+fn word_valid(word: &Word, result: &Vec<Letter>) -> bool {
+    for letter in result.iter() {
+        match letter {
+            Letter::YesAt(c, i) => {
+                if word[*i] != *c {
+                    return false;
                 }
-                Letter::NotAt { c, i } => {
-                    if word[*i] == *c {
-                        return false;
-                    }
-                    if !word.contains(c) {
-                        return false;
-                    }
+            }
+            Letter::Yes(c) => {
+                if !word.contains(c) {
+                    return false;
                 }
-                Letter::Not { c } => {
-                    if word.contains(c) {
-                        return false;
-                    }
+            }
+            Letter::NotAt(c, i) => {
+                if word[*i] == *c {
+                    return false;
+                }
+            }
+            Letter::Not(c) => {
+                if word.contains(c) {
+                    return false;
                 }
             }
         }
-
-        true
     }
 
-    fn count_amounts(valid_words: &Vec<&Word>) -> Amounts {
-        let mut amounts: Amounts = [[0; 5]; 26];
+    true
+}
 
-        for word in valid_words {
-            for (i, c) in word.iter().enumerate() {
-                amounts[*c as usize - 97][i] += 1;
-            }
-        }
-
-        amounts
+fn next_guess(dic: &Vec<Word>, result: &Vec<Letter>) -> Option<Word> {
+    if result.is_empty() {
+        return Some(word_from_str("tares"));
     }
 
-    fn word_score(&self, word: &Word, amounts: &Amounts) -> u32 {
+    let dic_valid = || dic.iter().filter(|v| word_valid(v, result));
+
+    let mut current_word: Option<(Word, usize)> = None;
+    for guess in dic {
         let mut score = 0;
 
-        let mut found = Vec::with_capacity(5);
-        for (i, c) in word.iter().enumerate() {
-            if found.contains(&c) {
-                continue;
-            }
-            found.push(c);
+        for word in dic_valid() {
+            let new_result = get_result(guess, word);
 
-            let k = *c as usize - 97;
-            for l in 0..5 {
-                if !self.known[l] {
-                    score += amounts[k][l];
-                }
-            }
+            score += dic_valid().filter(|w| !word_valid(w, &new_result)).count();
         }
 
-        score
-    }
-
-    fn next_word(&self) -> Option<&Word> {
-        let valid_words: Vec<&Word> = self
-            .words
-            .iter()
-            .filter(|word| self.word_valid(word))
-            .collect();
-
-        if valid_words.len() < 3 {
-            return valid_words.first().map(|word| *word);
-        }
-        let amounts = Self::count_amounts(&valid_words);
-
-        /*
-        for (i, a) in amounts.iter().enumerate() {
-            println!(
-                "{}: {:3} | {:3} | {:3} | {:3} | {:3}",
-                char::from_u32((i + 97) as u32).unwrap(),
-                a[0],
-                a[1],
-                a[2],
-                a[3],
-                a[4]
-            );
-        }
-        */
-
-        let mut current: Option<(u32, &Word)> = None;
-        for word in self.words.iter() {
-            let score = self.word_score(word, &amounts);
-
-            match current {
-                Some((current_score, ..)) if current_score >= score => {}
-                _ => current = Some((score, word)),
-            }
-        }
-
-        current.map(|v| v.1)
-    }
-
-    fn apply_result(&mut self, results: Vec<Letter>) {
-        for letter in results {
-            if let Letter::YesAt { c: _, i } = letter {
-                self.known[i] = true;
-            }
-
-            self.results.push(letter);
+        match current_word {
+            None => current_word = Some((*guess, score)),
+            Some((_, s)) if s < score => current_word = Some((*guess, score)),
+            _ => {}
         }
     }
+
+    current_word.map(|v| v.0)
 }
 
 fn read_result(word: &Word) -> Result<Vec<Letter>, Error> {
@@ -167,9 +120,12 @@ fn read_result(word: &Word) -> Result<Vec<Letter>, Error> {
 
     for (i, c) in line.chars().enumerate() {
         match c {
-            'c' => vec.push(Letter::YesAt { c: word[i], i: i }),
-            'x' => vec.push(Letter::NotAt { c: word[i], i: i }),
-            'w' => vec.push(Letter::Not { c: word[i] }),
+            'c' => vec.push(Letter::YesAt(word[i], i)),
+            'x' => {
+                vec.push(Letter::NotAt(word[i], i));
+                vec.push(Letter::Yes(word[i]));
+            }
+            'w' => vec.push(Letter::Not(word[i])),
             _ => {}
         }
     }
@@ -179,15 +135,29 @@ fn read_result(word: &Word) -> Result<Vec<Letter>, Error> {
 
 fn main() -> Result<(), Error> {
     let content = fs::read_to_string("dic")?;
-    let mut dic = Dic::new(&content);
+    let dic: Vec<Word> = content.lines().map(word_from_str).collect();
+    let mut result: Vec<Letter> = Vec::new();
 
     loop {
-        if let Some(word) = dic.next_word() {
-            println!("Next word: {}", word.map(|v| v.to_string()).join(""));
+        let dic_valid: Vec<&Word> = dic.iter().filter(|v| word_valid(v, &result)).collect();
 
-            dic.apply_result(read_result(word)?);
+        if dic_valid.len() == 1 {
+            println!("Result: {}", word_to_str(dic_valid.first().unwrap()));
+            break;
+        } else {
+            println!("Words left: {}", dic_valid.len());
+        }
+
+        if let Some(word) = next_guess(&dic, &result) {
+            println!("Next word: {}", word_to_str(&word));
+
+            for r in read_result(&word)? {
+                result.push(r);
+            }
         } else {
             return Err(Error::NoWord);
         }
     }
+
+    Ok(())
 }
